@@ -1,0 +1,151 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+}
+enum MembershipRole {
+  OWNER
+  COMPANY_ADMIN
+  HR_MANAGER
+  MANAGER
+  EMPLOYEE
+}
+enum EmploymentStatus {
+  ACTIVE
+  ON_LEAVE
+  TERMINATED
+}
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  HALF_DAY
+  ON_LEAVE
+}
+
+model Tenant {
+  id String @id @default(cuid())
+  name String
+  slug String @unique
+  status TenantStatus @default(ACTIVE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  memberships Membership[]
+  departments Department[]
+  employees Employee[]
+  leaveTypes LeaveType[]
+  leaveRequests LeaveRequest[]
+  attendance Attendance[]
+  @@index([status])
+}
+model User {
+  id String @id @default(cuid())
+  email String @unique
+  passwordHash String
+  name String
+  isPlatformAdmin Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  memberships Membership[]
+  employee Employee?
+}
+model Membership {
+  id String @id @default(cuid())
+  tenantId String
+  userId String
+  role MembershipRole
+  createdAt DateTime @default(now())
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([tenantId, userId])
+  @@index([userId, role])
+}
+model Department {
+  id String @id @default(cuid())
+  tenantId String
+  name String
+  code String?
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employees Employee[]
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+model Employee {
+  id String @id @default(cuid())
+  tenantId String
+  userId String? @unique
+  departmentId String?
+  employeeCode String
+  firstName String
+  lastName String
+  workEmail String?
+  jobTitle String?
+  joiningDate DateTime?
+  status EmploymentStatus @default(ACTIVE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  attendance Attendance[]
+  leaveRequests LeaveRequest[]
+  @@unique([tenantId, employeeCode])
+  @@index([tenantId, status])
+  @@index([tenantId, departmentId])
+}
+model LeaveType {
+  id String @id @default(cuid())
+  tenantId String
+  name String
+  annualAllowance Decimal @db.Decimal(6,2)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  requests LeaveRequest[]
+  @@unique([tenantId, name])
+}
+model LeaveRequest {
+  id String @id @default(cuid())
+  tenantId String
+  employeeId String
+  leaveTypeId String
+  startDate DateTime
+  endDate DateTime
+  days Decimal @db.Decimal(6,2)
+  reason String? @db.Text
+  status LeaveStatus @default(PENDING)
+  reviewedByUserId String?
+  reviewedAt DateTime?
+  createdAt DateTime @default(now())
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
+  @@index([tenantId, status, startDate])
+  @@index([tenantId, employeeId])
+}
+model Attendance {
+  id String @id @default(cuid())
+  tenantId String
+  employeeId String
+  workDate DateTime @db.Date
+  checkIn DateTime?
+  checkOut DateTime?
+  status AttendanceStatus @default(PRESENT)
+  source String @default("WEB")
+  createdAt DateTime @default(now())
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  @@unique([tenantId, employeeId, workDate])
+  @@index([tenantId, workDate])
+}
