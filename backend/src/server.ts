@@ -69,6 +69,8 @@ app.post('/api/v1/auth/register', async (req, res) => {
       const tenant = await tx.tenant.create({ data: { name: company, slug } });
       const user = await tx.user.create({ data: { name, email, passwordHash: hashPassword(password) } });
       const membership = await tx.membership.create({ data: { tenantId: tenant.id, userId: user.id, role: 'OWNER' } });
+      await tx.department.createMany({ data: [{ tenantId: tenant.id, name: 'Human Resources', code: 'HR' }, { tenantId: tenant.id, name: 'Operations', code: 'OPS' }, { tenantId: tenant.id, name: 'Finance', code: 'FIN' }] });
+      await tx.leaveType.createMany({ data: [{ tenantId: tenant.id, name: 'Annual Leave', annualAllowance: 18 }, { tenantId: tenant.id, name: 'Sick Leave', annualAllowance: 10 }, { tenantId: tenant.id, name: 'Casual Leave', annualAllowance: 7 }] });
       return { tenant, user, membership };
     });
     const session = { userId: result.user.id, tenantId: result.tenant.id, role: result.membership.role, email, name };
@@ -159,8 +161,9 @@ app.post('/api/v1/attendance/check-in', auth, async (req: AuthRequest, res) => {
   catch { return res.status(409).json({ error: 'Attendance has already been recorded today' }); }
 });
 app.post('/api/v1/attendance/:id/check-out', auth, async (req: AuthRequest, res) => {
-  const row = await prisma.attendance.findFirst({ where: { id: req.params.id, tenantId: tenantId(req) } });
+  const row = await prisma.attendance.findFirst({ where: { id: req.params.id, tenantId: tenantId(req) }, include: { employee: true } });
   if (!row) return res.status(404).json({ error: 'Attendance record not found' });
+  if (row.employee.userId !== req.session!.userId && !['OWNER','COMPANY_ADMIN','HR_MANAGER','MANAGER'].includes(req.session!.role)) return res.status(403).json({ error: 'You can only check out your own attendance' });
   if (row.checkOut) return res.status(409).json({ error: 'This attendance record is already checked out' });
   res.json(await prisma.attendance.update({ where: { id: row.id }, data: { checkOut: new Date() }, include: { employee: true } }));
 });
