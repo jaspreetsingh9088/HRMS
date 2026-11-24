@@ -131,7 +131,7 @@ app.post('/api/v1/employees', auth, allow('OWNER','COMPANY_ADMIN','HR_MANAGER'),
   catch { return res.status(409).json({ error: 'Employee ID already exists or employee data is invalid' }); }
 });
 app.patch('/api/v1/employees/:id', auth, allow('OWNER','COMPANY_ADMIN','HR_MANAGER'), async (req: AuthRequest, res) => {
-  const t = tenantId(req), old = await prisma.employee.findFirst({ where: { id: req.params.id, tenantId: t } });
+  const t = tenantId(req), old = await prisma.employee.findFirst({ where: { id: text(req.params.id), tenantId: t } });
   if (!old) return res.status(404).json({ error: 'Employee not found' });
   const b = req.body;
   if (b.departmentId && !await prisma.department.findFirst({ where: { id: text(b.departmentId), tenantId: t } })) return res.status(400).json({ error: 'Selected department is invalid' });
@@ -139,7 +139,7 @@ app.patch('/api/v1/employees/:id', auth, allow('OWNER','COMPANY_ADMIN','HR_MANAG
   catch { return res.status(400).json({ error: 'Employee update failed' }); }
 });
 app.delete('/api/v1/employees/:id', auth, allow('OWNER','COMPANY_ADMIN','HR_MANAGER'), async (req: AuthRequest, res) => {
-  const row = await prisma.employee.findFirst({ where: { id: req.params.id, tenantId: tenantId(req) } });
+  const row = await prisma.employee.findFirst({ where: { id: text(req.params.id), tenantId: tenantId(req) } });
   if (!row) return res.status(404).json({ error: 'Employee not found' });
   await prisma.employee.update({ where: { id: row.id }, data: { status: 'TERMINATED' } });
   res.json({ success: true, message: 'Employee marked as terminated' });
@@ -161,7 +161,7 @@ app.post('/api/v1/attendance/check-in', auth, async (req: AuthRequest, res) => {
   catch { return res.status(409).json({ error: 'Attendance has already been recorded today' }); }
 });
 app.post('/api/v1/attendance/:id/check-out', auth, async (req: AuthRequest, res) => {
-  const row = await prisma.attendance.findFirst({ where: { id: req.params.id, tenantId: tenantId(req) }, include: { employee: true } });
+  const row = await prisma.attendance.findFirst({ where: { id: text(req.params.id), tenantId: tenantId(req) }, include: { employee: true } });
   if (!row) return res.status(404).json({ error: 'Attendance record not found' });
   if (row.employee.userId !== req.session!.userId && !['OWNER','COMPANY_ADMIN','HR_MANAGER','MANAGER'].includes(req.session!.role)) return res.status(403).json({ error: 'You can only check out your own attendance' });
   if (row.checkOut) return res.status(409).json({ error: 'This attendance record is already checked out' });
@@ -189,7 +189,7 @@ app.post('/api/v1/leaves', auth, async (req: AuthRequest, res) => {
 app.patch('/api/v1/leaves/:id/review', auth, allow('OWNER','COMPANY_ADMIN','HR_MANAGER','MANAGER'), async (req: AuthRequest, res) => {
   const status = text(req.body.status);
   if (!['APPROVED','REJECTED'].includes(status)) return res.status(400).json({ error: 'Choose APPROVED or REJECTED' });
-  const row = await prisma.leaveRequest.findFirst({ where: { id: req.params.id, tenantId: tenantId(req), status: 'PENDING' } });
+  const row = await prisma.leaveRequest.findFirst({ where: { id: text(req.params.id), tenantId: tenantId(req), status: 'PENDING' } });
   if (!row) return res.status(404).json({ error: 'Pending leave request not found' });
   return res.json(await prisma.leaveRequest.update({ where: { id: row.id }, data: { status: status as LeaveStatus, reviewedByUserId: req.session!.userId, reviewedAt: new Date() }, include: { employee: true, leaveType: true } }));
 });
