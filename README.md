@@ -1,28 +1,63 @@
-# HRMS SaaS
+# PeopleFlow HRMS SaaS
 
-Multi-tenant Human Resource Management System starter.
+A multi-tenant HR management platform. The first functional release includes company onboarding, authentication, tenant-scoped employee records, departments, attendance and leave management.
 
-## Architecture
-- `frontend`: Next.js App Router + TypeScript + Tailwind CSS (Vercel)
-- `backend`: Express + TypeScript + Prisma (Node runtime)
-- Database: MySQL
-- Tenancy: tenant-scoped records; tenant context must be derived from authenticated membership, never trusted from request body.
+## Stack
+- Frontend: Next.js App Router, React, TypeScript, Tailwind CSS
+- API: Node.js, Express, TypeScript
+- ORM: Prisma
+- Database: PostgreSQL (Neon)
+- Hosting: Vercel (frontend and API as separate projects)
 
-## Initial modules
-Authentication, tenant/company onboarding, RBAC, employee directory, departments, attendance, leave, payroll foundation, audit logging.
+## Current working modules
+- Company registration and sign-in
+- Tenant membership roles: OWNER, COMPANY_ADMIN, HR_MANAGER, MANAGER, EMPLOYEE
+- Employee directory: create, search, update API, terminate
+- Department management
+- Attendance register, check-in and check-out
+- Leave types, leave requests and manager approvals
+- Live dashboard counts from the database
 
-## Local development
-1. Copy `backend/.env.example` to `backend/.env` and configure MySQL.
-2. `cd backend && npm install && npx prisma generate && npx prisma migrate dev`
-3. `npm run dev`
-4. In another terminal: `cd frontend && npm install && npm run dev`
-5. Set `NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1` in `frontend/.env.local`.
+## Local setup
 
-## Security notes
-- All tenant-owned queries must be scoped by `tenantId` from the verified session.
-- Passwords must be hashed; access tokens must be short-lived and refresh tokens rotated/revoked.
-- Add rate limiting, input validation, CSRF protections where cookie auth is used, and audit events before production.
-- Payroll rules, tax, PF/ESI and statutory compliance must be configured for the client's jurisdiction and reviewed by a qualified professional.
+1. Create `backend/.env` from `backend/.env.example`.
+2. Set Neon `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `JWT_ACCESS_SECRET` (at least 32 random characters), `FRONTEND_URL`.
+3. Install and migrate the API:
 
-## Deployment
-Deploy frontend and backend as separate Vercel projects or deploy backend to a persistent Node host if background jobs/long-running tasks are required. Configure environment variables in the hosting dashboard; never commit secrets.
+```bash
+cd backend
+npm install
+npx prisma generate
+npx prisma migrate deploy
+npm run dev
+```
+
+4. Create `frontend/.env.local` from `frontend/.env.example`, then set the API URL.
+5. Start the frontend:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+## Vercel environment variables
+
+### Backend project (Root Directory: `backend`)
+- `DATABASE_URL`: Neon pooled connection string (include `sslmode=require`)
+- `DATABASE_URL_UNPOOLED`: Neon direct connection string (include `sslmode=require`)
+- `JWT_ACCESS_SECRET`: long random secret, 32+ characters
+- `FRONTEND_URL`: deployed frontend origin, e.g. `https://YOUR-FRONTEND.vercel.app`
+- `NODE_ENV`: `production`
+
+### Frontend project (Root Directory: `frontend`)
+- `NEXT_PUBLIC_API_URL`: deployed API base, e.g. `https://YOUR-BACKEND.vercel.app/api/v1`
+
+After changing environment variables, redeploy the relevant Vercel project. Vercel deployments are triggered by pushes to the connected GitHub branch.
+
+## Security and release notes
+- API tenant context is taken from a signed access token; client-supplied tenant IDs are never trusted.
+- Passwords are stored as salted scrypt hashes.
+- All HR records are queried using the authenticated tenant ID.
+- This is an actively developed first release, not yet a complete payroll/statutory-compliance product. Before production use, add refresh-token revocation, rate limiting, audit trails, automated tests, payroll jurisdiction rules, backups and security review.
+- Payroll, recruitment, performance, expense claims, advanced reporting and granular permissions are planned next modules.
