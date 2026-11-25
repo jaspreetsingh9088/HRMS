@@ -59,5 +59,8 @@ After changing environment variables, redeploy the relevant Vercel project. Verc
 - API tenant context is taken from a signed access token; client-supplied tenant IDs are never trusted.
 - Passwords are stored as salted scrypt hashes.
 - All HR records are queried using the authenticated tenant ID.
-- This is an actively developed first release, not yet a complete payroll/statutory-compliance product. Before production use, add refresh-token revocation, rate limiting, audit trails, automated tests, payroll jurisdiction rules, backups and security review.
+- Access tokens expire after 15 minutes; refresh tokens are stored as hashes, held in HttpOnly cookies, rotated on use and backed by revocable database sessions.
+- Logout revokes the current refresh session; logout-all revokes all of the user's active sessions.
+- API authentication checks the persisted session and current tenant membership on each authenticated request.
+- This is an actively developed first release, not yet a complete payroll/statutory-compliance product. Before production use, add password recovery/email verification, rate limiting, audit trails, automated security and tenant-isolation tests, payroll jurisdiction rules, backups and an independent security review. Configure production HTTPS and exact frontend CORS origins.
 - Payroll, recruitment, performance, expense claims, advanced reporting and granular permissions are planned next modules.
