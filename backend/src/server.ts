@@ -155,8 +155,14 @@ app.post('/api/v1/auth/refresh', async (req, res) => {
   return res.json({ token: sign({ sid: current.id, userId: current.userId, tenantId: current.tenantId, role: membership.role, email: current.user.email, name: current.user.name }) });
 });
 
-app.post('/api/v1/auth/logout', auth, async (req: AuthRequest, res) => {
-  await prisma.authSession.updateMany({ where: { id: req.session!.sid, userId: req.session!.userId, revokedAt: null }, data: { revokedAt: new Date() } });
+app.post('/api/v1/auth/logout', async (req, res) => {
+  const refreshToken = readRefreshCookie(req);
+  if (refreshToken) {
+    await prisma.authSession.updateMany({
+      where: { refreshTokenHash: hashToken(refreshToken), revokedAt: null },
+      data: { revokedAt: new Date() }
+    });
+  }
   clearRefreshCookie(res);
   return res.json({ success: true });
 });
