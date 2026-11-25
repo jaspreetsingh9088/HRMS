@@ -3,7 +3,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { PrismaClient, MembershipRole, EmploymentStatus, LeaveStatus } from '@prisma/client';
-import { randomBytes, scryptSync, timingSafeEqual, createHmac } from 'node:crypto';
+import { randomBytes, scryptSync, timingSafeEqual, createHmac, createHash } from 'node:crypto';
 
 const app = express();
 const prisma = new PrismaClient();
@@ -13,7 +13,7 @@ app.use(helmet());
 app.use(cors({ origin: (process.env.FRONTEND_URL ?? 'http://localhost:3000').split(',').map(x => x.trim()), credentials: true }));
 app.use(express.json({ limit: '1mb' }));
 
-type Session = { userId: string; tenantId: string; role: MembershipRole; email: string; name: string; exp: number };
+type Session = { sid: string; userId: string; tenantId: string; role: MembershipRole; email: string; name: string; exp: number };
 type AuthRequest = Request & { session?: Session };
 const text = (v: unknown) => typeof v === 'string' ? v.trim() : '';
 const emailValid = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
@@ -23,24 +23,57 @@ const verifyPassword = (password: string, stored: string) => {
   const actual = scryptSync(password, salt, 64), expected = Buffer.from(digest, 'hex');
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 };
+const hashToken = (value: string) => createHash('sha256').update(value).digest('hex');
+const refreshCookieName = 'peopleflow_refresh';
+const refreshLifetimeMs = 30 * 24 * 60 * 60 * 1000;
+const setRefreshCookie = (res: Response, value: string) => {
+  const secure = process.env.NODE_ENV === 'production';
+  res.append('Set-Cookie', `${refreshCookieName}=${value}; HttpOnly; Path=/api/v1/auth; SameSite=None; Max-Age=${Math.floor(refreshLifetimeMs / 1000)}${secure ? '; Secure' : ''}`);
+};
+const clearRefreshCookie = (res: Response) => {
+  const secure = process.env.NODE_ENV === 'production';
+  res.append('Set-Cookie', `${refreshCookieName}=; HttpOnly; Path=/api/v1/auth; SameSite=None; Max-Age=0${secure ? '; Secure' : ''}`);
+};
+const readRefreshCookie = (req: Request) => {
+  const cookies = (req.headers.cookie ?? '').split(';').map(x => x.trim());
+  const item = cookies.find(x => x.startsWith(refreshCookieName + '='));
+  return item ? decodeURIComponent(item.slice(refreshCookieName.length + 1)) : '';
+};
 const sign = (session: Omit<Session, 'exp'>) => {
-  const payload = Buffer.from(JSON.stringify({ ...session, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 12 })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({ ...session, exp: Math.floor(Date.now() / 1000) + 15 * 60 })).toString('base64url');
   return payload + '.' + createHmac('sha256', JWT_SECRET!).update(payload).digest('base64url');
 };
 const decode = (value: string): Session => {
   const [payload, signature] = value.split('.');
+  if (!payload || !signature) throw new Error('Invalid token');
   const expected = createHmac('sha256', JWT_SECRET!).update(payload).digest();
-  const actual = Buffer.from(signature ?? '', 'base64url');
+  const actual = Buffer.from(signature, 'base64url');
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) throw new Error('Invalid token');
   const session = JSON.parse(Buffer.from(payload, 'base64url').toString()) as Session;
-  if (session.exp < Date.now() / 1000) throw new Error('Expired token');
+  if (!session.sid || !session.userId || !session.tenantId || session.exp < Date.now() / 1000) throw new Error('Expired or invalid token');
   return session;
 };
-function auth(req: AuthRequest, res: Response, next: NextFunction) {
+async function issueSession(userId: string, tenantId: string, role: MembershipRole, email: string, name: string) {
+  const refreshToken = randomBytes(48).toString('base64url');
+  const record = await prisma.authSession.create({
+    data: { userId, tenantId, refreshTokenHash: hashToken(refreshToken), expiresAt: new Date(Date.now() + refreshLifetimeMs) }
+  });
+  const accessToken = sign({ sid: record.id, userId, tenantId, role, email, name });
+  return { accessToken, refreshToken };
+}
+async function auth(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const header = req.headers.authorization ?? '';
     if (!header.startsWith('Bearer ')) return res.status(401).json({ error: 'Please sign in' });
-    req.session = decode(header.slice(7));
+    const decoded = decode(header.slice(7));
+    const record = await prisma.authSession.findFirst({
+      where: { id: decoded.sid, userId: decoded.userId, tenantId: decoded.tenantId, revokedAt: null, expiresAt: { gt: new Date() } },
+      include: { user: true, tenant: true }
+    });
+    if (!record || record.tenant.status !== 'ACTIVE') return res.status(401).json({ error: 'Session revoked or expired. Please sign in again.' });
+    const membership = await prisma.membership.findUnique({ where: { tenantId_userId: { tenantId: record.tenantId, userId: record.userId } } });
+    if (!membership) return res.status(403).json({ error: 'Workspace membership is no longer active' });
+    req.session = { ...decoded, role: membership.role, email: record.user.email, name: record.user.name };
     return next();
   } catch { return res.status(401).json({ error: 'Session expired. Please sign in again.' }); }
 }
@@ -73,8 +106,9 @@ app.post('/api/v1/auth/register', async (req, res) => {
       await tx.leaveType.createMany({ data: [{ tenantId: tenant.id, name: 'Annual Leave', annualAllowance: 18 }, { tenantId: tenant.id, name: 'Sick Leave', annualAllowance: 10 }, { tenantId: tenant.id, name: 'Casual Leave', annualAllowance: 7 }] });
       return { tenant, user, membership };
     });
-    const session = { userId: result.user.id, tenantId: result.tenant.id, role: result.membership.role, email, name };
-    return res.status(201).json({ token: sign(session), user: { id: result.user.id, name, email }, company: { id: result.tenant.id, name: company }, role: 'OWNER' });
+    const issued = await issueSession(result.user.id, result.tenant.id, result.membership.role, email, name);
+    setRefreshCookie(res, issued.refreshToken);
+    return res.status(201).json({ token: issued.accessToken, user: { id: result.user.id, name, email }, company: { id: result.tenant.id, name: company }, role: 'OWNER' });
   } catch (error) { console.error(error); return res.status(500).json({ error: 'Could not create company account' }); }
 });
 app.post('/api/v1/auth/login', async (req, res) => {
@@ -84,10 +118,55 @@ app.post('/api/v1/auth/login', async (req, res) => {
     if (!user || !verifyPassword(password, user.passwordHash)) return res.status(401).json({ error: 'Email or password is incorrect' });
     const membership = user.memberships.find(m => m.tenant.status === 'ACTIVE');
     if (!membership) return res.status(403).json({ error: 'No active company workspace found' });
-    const session = { userId: user.id, tenantId: membership.tenantId, role: membership.role, email: user.email, name: user.name };
-    return res.json({ token: sign(session), user: { id: user.id, name: user.name, email: user.email }, company: { id: membership.tenant.id, name: membership.tenant.name }, role: membership.role });
+    const issued = await issueSession(user.id, membership.tenantId, membership.role, user.email, user.name);
+    setRefreshCookie(res, issued.refreshToken);
+    return res.json({ token: issued.accessToken, user: { id: user.id, name: user.name, email: user.email }, company: { id: membership.tenant.id, name: membership.tenant.name }, role: membership.role });
   } catch (error) { console.error(error); return res.status(500).json({ error: 'Sign in failed' }); }
 });
+app.post('/api/v1/auth/refresh', async (req, res) => {
+  const refreshToken = readRefreshCookie(req);
+  if (!refreshToken) return res.status(401).json({ error: 'Refresh session not found. Please sign in again.' });
+  const current = await prisma.authSession.findUnique({
+    where: { refreshTokenHash: hashToken(refreshToken) },
+    include: { user: true, tenant: true }
+  });
+  if (!current || current.revokedAt || current.expiresAt <= new Date() || current.tenant.status !== 'ACTIVE') {
+    clearRefreshCookie(res);
+    return res.status(401).json({ error: 'Refresh session expired or revoked. Please sign in again.' });
+  }
+  const membership = await prisma.membership.findUnique({
+    where: { tenantId_userId: { tenantId: current.tenantId, userId: current.userId } }
+  });
+  if (!membership) {
+    await prisma.authSession.updateMany({ where: { id: current.id, revokedAt: null }, data: { revokedAt: new Date() } });
+    clearRefreshCookie(res);
+    return res.status(403).json({ error: 'Workspace membership is no longer active' });
+  }
+  const nextRefresh = randomBytes(48).toString('base64url');
+  const rotated = await prisma.authSession.updateMany({
+    where: { id: current.id, refreshTokenHash: hashToken(refreshToken), revokedAt: null, expiresAt: { gt: new Date() } },
+    data: { refreshTokenHash: hashToken(nextRefresh), expiresAt: new Date(Date.now() + refreshLifetimeMs) }
+  });
+  if (rotated.count !== 1) {
+    clearRefreshCookie(res);
+    return res.status(401).json({ error: 'Refresh token has already been used. Please sign in again.' });
+  }
+  setRefreshCookie(res, nextRefresh);
+  return res.json({ token: sign({ sid: current.id, userId: current.userId, tenantId: current.tenantId, role: membership.role, email: current.user.email, name: current.user.name }) });
+});
+
+app.post('/api/v1/auth/logout', auth, async (req: AuthRequest, res) => {
+  await prisma.authSession.updateMany({ where: { id: req.session!.sid, userId: req.session!.userId, revokedAt: null }, data: { revokedAt: new Date() } });
+  clearRefreshCookie(res);
+  return res.json({ success: true });
+});
+
+app.post('/api/v1/auth/logout-all', auth, async (req: AuthRequest, res) => {
+  await prisma.authSession.updateMany({ where: { userId: req.session!.userId, revokedAt: null }, data: { revokedAt: new Date() } });
+  clearRefreshCookie(res);
+  return res.json({ success: true });
+});
+
 app.get('/api/v1/auth/me', auth, async (req: AuthRequest, res) => {
   const s = req.session!;
   const membership = await prisma.membership.findUnique({ where: { tenantId_userId: { tenantId: s.tenantId, userId: s.userId } }, include: { tenant: true } });
@@ -120,15 +199,11 @@ app.post('/api/v1/auth/switch-workspace', auth, async (req: AuthRequest, res) =>
   if (!membership || membership.tenant.status !== 'ACTIVE') {
     return res.status(403).json({ error: 'You do not have access to this active workspace' });
   }
-  const session = {
-    userId: membership.userId,
-    tenantId: membership.tenantId,
-    role: membership.role,
-    email: membership.user.email,
-    name: membership.user.name
-  };
+  await prisma.authSession.updateMany({ where: { id: req.session!.sid, revokedAt: null }, data: { revokedAt: new Date() } });
+  const issued = await issueSession(membership.userId, membership.tenantId, membership.role, membership.user.email, membership.user.name);
+  setRefreshCookie(res, issued.refreshToken);
   return res.json({
-    token: sign(session),
+    token: issued.accessToken,
     user: { id: membership.user.id, name: membership.user.name, email: membership.user.email },
     company: { id: membership.tenant.id, name: membership.tenant.name },
     role: membership.role
