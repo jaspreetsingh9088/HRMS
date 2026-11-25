@@ -28,11 +28,13 @@ const refreshCookieName = 'peopleflow_refresh';
 const refreshLifetimeMs = 30 * 24 * 60 * 60 * 1000;
 const setRefreshCookie = (res: Response, value: string) => {
   const secure = process.env.NODE_ENV === 'production';
-  res.append('Set-Cookie', `${refreshCookieName}=${value}; HttpOnly; Path=/api/v1/auth; SameSite=None; Max-Age=${Math.floor(refreshLifetimeMs / 1000)}${secure ? '; Secure' : ''}`);
+  const sameSite = secure ? 'None' : 'Lax';
+  res.append('Set-Cookie', `${refreshCookieName}=${value}; HttpOnly; Path=/api/v1/auth; SameSite=${sameSite}; Max-Age=${Math.floor(refreshLifetimeMs / 1000)}${secure ? '; Secure' : ''}`);
 };
 const clearRefreshCookie = (res: Response) => {
   const secure = process.env.NODE_ENV === 'production';
-  res.append('Set-Cookie', `${refreshCookieName}=; HttpOnly; Path=/api/v1/auth; SameSite=None; Max-Age=0${secure ? '; Secure' : ''}`);
+  const sameSite = secure ? 'None' : 'Lax';
+  res.append('Set-Cookie', `${refreshCookieName}=; HttpOnly; Path=/api/v1/auth; SameSite=${sameSite}; Max-Age=0${secure ? '; Secure' : ''}`);
 };
 const readRefreshCookie = (req: Request) => {
   const cookies = (req.headers.cookie ?? '').split(';').map(x => x.trim());
