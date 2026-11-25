@@ -23,7 +23,7 @@ export default function Home() {
  const request=useCallback(async(path:string,options:RequestInit={})=>{
   const send=(accessToken:string)=>fetch(API+path,{...options,credentials:'include',headers:{'Content-Type':'application/json',...(accessToken?{Authorization:'Bearer '+accessToken}:{}),...(options.headers||{})}});
   let response=await send(token);
-  if(response.status===401&&!path.startsWith('/auth/')){
+  if(response.status===401&&!['/auth/login','/auth/register','/auth/refresh','/auth/logout'].includes(path)){
    const refreshed=await fetch(API+'/auth/refresh',{method:'POST',credentials:'include'});
    if(refreshed.ok){const session=await refreshed.json();localStorage.setItem('peopleflow_token',session.token);setToken(session.token);response=await send(session.token);}
   }
