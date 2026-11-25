@@ -86,6 +86,8 @@
 
 ### Phase 1 — Enterprise SaaS foundation
 - Multi-tenant membership and tenant switching.
+- Persisted authentication sessions with 15-minute access tokens, 30-day rotating refresh tokens in HttpOnly cookies, current-session logout and logout-all revocation.
+- API middleware validates persisted session state and current tenant membership.
 - Invitations and account lifecycle.
 - Refresh-session rotation, logout/revocation and password reset.
 - Central authorization and tenant-scoped repository/service patterns.
@@ -147,4 +149,4 @@
 
 ## Current known limitations
 
-The current release has basic company registration/login, departments, employee records, attendance and leave. Payroll, recruitment, performance, expenses, subscriptions, workflow execution, AI assistant, session revocation, audit trails, rate limiting, MFA/SSO and comprehensive automated tests are not yet production-complete. A successful Vercel deployment and database health check do not by themselves establish production readiness.
+The current release has basic company registration/login, departments, employee records, attendance and leave. Persisted sessions, refresh rotation and logout revocation are implemented on the development branch and awaiting final CI review. Payroll, recruitment, performance, expenses, subscriptions, workflow execution, AI assistant, password recovery, audit trails, rate limiting, MFA/SSO and comprehensive automated security tests are not yet production-complete. A successful Vercel deployment and database health check do not by themselves establish production readiness.
