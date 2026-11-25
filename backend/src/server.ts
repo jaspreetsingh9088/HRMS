@@ -95,6 +95,46 @@ app.get('/api/v1/auth/me', auth, async (req: AuthRequest, res) => {
   res.json({ user: { id: s.userId, name: s.name, email: s.email }, company: { id: s.tenantId, name: membership.tenant.name }, role: s.role });
 });
 
+app.get('/api/v1/auth/workspaces', auth, async (req: AuthRequest, res) => {
+  const memberships = await prisma.membership.findMany({
+    where: { userId: req.session!.userId, tenant: { status: 'ACTIVE' } },
+    include: { tenant: true },
+    orderBy: { createdAt: 'asc' }
+  });
+  res.json(memberships.map(m => ({
+    tenantId: m.tenantId,
+    name: m.tenant.name,
+    slug: m.tenant.slug,
+    role: m.role,
+    current: m.tenantId === req.session!.tenantId
+  })));
+});
+
+app.post('/api/v1/auth/switch-workspace', auth, async (req: AuthRequest, res) => {
+  const requestedTenantId = text(req.body.tenantId);
+  if (!requestedTenantId) return res.status(400).json({ error: 'Choose a company workspace' });
+  const membership = await prisma.membership.findUnique({
+    where: { tenantId_userId: { tenantId: requestedTenantId, userId: req.session!.userId } },
+    include: { tenant: true, user: true }
+  });
+  if (!membership || membership.tenant.status !== 'ACTIVE') {
+    return res.status(403).json({ error: 'You do not have access to this active workspace' });
+  }
+  const session = {
+    userId: membership.userId,
+    tenantId: membership.tenantId,
+    role: membership.role,
+    email: membership.user.email,
+    name: membership.user.name
+  };
+  return res.json({
+    token: sign(session),
+    user: { id: membership.user.id, name: membership.user.name, email: membership.user.email },
+    company: { id: membership.tenant.id, name: membership.tenant.name },
+    role: membership.role
+  });
+});
+
 app.get('/api/v1/dashboard', auth, async (req: AuthRequest, res) => {
   const t = tenantId(req), { from, to } = todayRange();
   const [totalEmployees, activeEmployees, presentToday, onLeaveToday, pendingLeaves, departmentCount, recentEmployees] = await Promise.all([
